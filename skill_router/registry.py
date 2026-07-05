@@ -5,16 +5,13 @@ multiple skill directories and configurable domain/group inference.
 """
 
 import json
-import os
 import re
 from pathlib import Path
 from typing import Any
 
 # ── Domain inference from skill name ──────────────────────────────────────────
 
-# Skill names that map to specific domains
 DOMAIN_OVERRIDES: dict[str, str] = {
-    # Tool skills
     "lit-search": "tool",
     "neat-freak": "tool",
     "notebooklm": "tool",
@@ -30,19 +27,15 @@ DOMAIN_OVERRIDES: dict[str, str] = {
     "hv-analysis": "tool",
     "khazix-writer": "tool",
     "humanities-guard": "tool",
-    # Plugin skills
     "tong-jincheng-skill": "plugin",
     "zhangxuefeng-skill": "plugin",
     "using-coze-cli": "plugin",
-    # Runbook skills
     "dbs-troubleshoot": "runbook",
     "diagnosing-bugs": "runbook",
-    # LibreOffice
     "libreoffice-calc": "tool",
     "libreoffice-writer": "tool",
 }
 
-# Skills that map to specific groups (7 groups for routing)
 GROUP_SKILLS: dict[str, str] = {
     **{s: "coding" for s in [
         "code-review", "codebase-design", "domain-modeling",
@@ -73,47 +66,34 @@ GROUP_SKILLS: dict[str, str] = {
 
 def get_domain(name: str) -> str:
     """Infer domain from skill name."""
-
     if name in DOMAIN_OVERRIDES:
         return DOMAIN_OVERRIDES[name]
-
     if name.startswith("s4h-"):
         parts = name.split("-")
         if len(parts) >= 2:
-            return parts[1]  # s4h-creativity-* → creativity
-
+            return parts[1]
     if name.startswith("dbs-"):
         return "dbs"
-
     if name.startswith("ponytail"):
         return "ponytail"
-
     if name.startswith("libreoffice"):
         return "tool"
-
     return "other"
 
 
 def get_group(name: str, domain: str, skill_type: str) -> str:
     """Map skill to high-level group for routing."""
-
     if name in GROUP_SKILLS:
         return GROUP_SKILLS[name]
-
-    # All s4h-* sub-skills are thinking
     if name.startswith("s4h-"):
         return "thinking"
-
-    # All dbs-* sub-skills are thinking
     if name.startswith("dbs-"):
         return "thinking"
-
     return "infra"
 
 
 def get_type(name: str) -> str:
     """Infer skill type from name."""
-
     if name.startswith("s4h-"):
         return "s4h"
     if name.startswith("dbs-"):
@@ -122,21 +102,17 @@ def get_type(name: str) -> str:
         return "ponytail"
     if name.startswith("libreoffice"):
         return "tool"
-
     tool_names = {
         "lit-search", "neat-freak", "notebooklm", "ppt-master",
         "skill-curator", "storage-analyzer", "cache-cleanup", "ccswitch",
         "aihot", "content-research-writer", "hv-analysis", "khazix-writer",
-        "humanities-guard", "content-research-loop", "deep-research-loop",
-        "knowledge-maintenance-loop", "lit-watchdog-loop", "method-loop",
+        "humanities-guard",
     }
     if name in tool_names:
         return "tool"
-
     plugin_names = {"tong-jincheng-skill", "zhangxuefeng-skill", "using-coze-cli"}
     if name in plugin_names:
         return "plugin"
-
     return "other"
 
 
@@ -144,12 +120,10 @@ def extract_frontmatter(content: str) -> dict[str, str]:
     """Extract YAML frontmatter from SKILL.md content.
 
     Returns a dict with at least 'description' key.
-    Handles double-quoted, single-quoted, unquoted, and folded (>)
-    YAML values.
+    Handles double-quoted, single-quoted, unquoted, folded (>),
+    and literal-block (|) YAML values.
     """
     result: dict[str, str] = {}
-
-    # Normalize line endings
     normalized = content.replace("\r\n", "\n")
 
     # Match YAML frontmatter between --- delimiters
@@ -159,17 +133,14 @@ def extract_frontmatter(content: str) -> dict[str, str]:
 
     yaml_block = m.group(1)
 
-    # Extract description (supports multiple YAML quote styles)
     desc = _extract_yaml_field(yaml_block, "description")
     if desc:
         result["description"] = desc
 
-    # Check for source_of_truth (bridge mode)
     sot = _extract_yaml_field(yaml_block, "source_of_truth")
     if sot:
         result["source_of_truth"] = sot
 
-    # Check for trigger_patterns
     tp = _extract_yaml_field(yaml_block, "trigger_patterns")
     if tp:
         result["trigger_patterns"] = tp
@@ -181,7 +152,7 @@ def _extract_yaml_field(yaml_block: str, field: str) -> str | None:
     """Extract a single field from a YAML block.
 
     Handles: double-quoted, single-quoted, unquoted (single line),
-    and folded (>) multi-line values.
+    folded (>), and literal-block (|) multi-line values.
     """
     # Double-quoted: description: "value"
     m = re.search(rf'^{field}:\s*"([^"]*)"', yaml_block, re.MULTILINE)
@@ -193,10 +164,15 @@ def _extract_yaml_field(yaml_block: str, field: str) -> str | None:
     if m:
         return m.group(1).strip()
 
-    # Folded: description: >\n  value\n  more
-    m = re.search(rf"^{field}:\s*>\s*\n(.*?)(?:\n\S|\Z)", yaml_block, re.MULTILINE | re.DOTALL)
+    # Folded block scalar: description: >\n  value
+    m = _extract_block_scalar(yaml_block, field, ">")
     if m:
-        return re.sub(r"\s+", " ", m.group(1)).strip()
+        return m
+
+    # Literal block scalar: description: |\n  value
+    m = _extract_block_scalar(yaml_block, field, "|")
+    if m:
+        return m
 
     # Unquoted single line: description: value
     m = re.search(rf"^{field}:\s*(.+?)$", yaml_block, re.MULTILINE)
@@ -206,14 +182,29 @@ def _extract_yaml_field(yaml_block: str, field: str) -> str | None:
     return None
 
 
+def _extract_block_scalar(yaml_block: str, field: str, marker: str) -> str | None:
+    """Extract a YAML block scalar (> or |) value.
+
+    Matches from the field line through indented continuation lines,
+    stopping at the next field (non-indented line) or end of block.
+    """
+    escaped_marker = re.escape(marker)
+    m = re.search(
+        rf"^{field}:\s*{escaped_marker}\s*\n(.*?)(?:\n\S|\Z)",
+        yaml_block,
+        re.MULTILINE | re.DOTALL,
+    )
+    if m:
+        # Collapse whitespace while preserving word boundaries
+        return re.sub(r"\s+", " ", m.group(1)).strip()
+    return None
+
+
 def scan_directory(skills_dir: Path) -> dict[str, dict[str, Any]]:
     """Scan a skills directory for SKILL.md files and build registry entries.
 
-    Args:
-        skills_dir: Path to the skills directory (e.g., ~/.claude/skills/)
-
-    Returns:
-        Dict mapping skill name → registry entry.
+    Errors (permission, encoding) are skipped with a warning — one bad
+    file shouldn't break the entire scan.
     """
     registry: dict[str, dict[str, Any]] = {}
 
@@ -229,9 +220,14 @@ def scan_directory(skills_dir: Path) -> dict[str, dict[str, Any]]:
             continue
 
         name = skill_dir.name
-        content = skill_md.read_text(encoding="utf-8")
-        frontmatter = extract_frontmatter(content)
 
+        try:
+            content = skill_md.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError) as e:
+            print(f"  [WARN] Skipping {name}: {e}", flush=True)
+            continue
+
+        frontmatter = extract_frontmatter(content)
         description = frontmatter.get("description", "")
         source_of_truth = frontmatter.get("source_of_truth")
         is_bridge = source_of_truth is not None
@@ -279,9 +275,25 @@ def generate_registry(
         ]
 
     registry: dict[str, dict[str, Any]] = {}
+    missing_dirs: list[str] = []
+
     for skills_dir in skill_dirs:
-        entries = scan_directory(skills_dir)
-        registry.update(entries)  # later dirs override earlier ones
+        if not skills_dir.is_dir():
+            missing_dirs.append(str(skills_dir))
+            continue
+        try:
+            entries = scan_directory(skills_dir)
+        except PermissionError:
+            print(f"  [WARN] Permission denied: {skills_dir}", flush=True)
+            continue
+        registry.update(entries)
+
+    if missing_dirs:
+        print(f"  [INFO] Directories not found (skipped):")
+        for d in missing_dirs:
+            print(f"    - {d}")
+        print("  Use -d to specify custom skill directories.")
+        print()
 
     if output_path:
         output_path.parent.mkdir(parents=True, exist_ok=True)

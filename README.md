@@ -1,233 +1,187 @@
 # cc-skill-router
 
-**Semantic skill router for Claude Code.** Scans your skill directories, builds a searchable registry, and provides bilingual (Chinese/English) fuzzy search to route user requests to the best matching skill — so you don't have to remember 200+ skill names.
+**Claude Code 语义技能路由器** — 中英文模糊搜索，3 阶段路由策略，零依赖。
 
-**Claude Code 语义技能路由器。** 扫描你的 skill 目录，构建可搜索的注册表，通过中英文模糊搜索将用户请求路由到最匹配的技能 — 再也不用记住 200+ 个 skill 名字。
+**Semantic skill router for Claude Code** — bilingual fuzzy search, 3-stage routing, zero dependencies.
 
-## The Problem / 解决的问题
+> 🀄 **本项目针对中文使用场景深度优化**：内置 100+ 条中文关键词映射表，支持 CJK bigram 模糊匹配，中文查询无需记忆英文 skill 名。
+>
+> 🀄 **Optimized for Chinese-language workflows**: 100+ Chinese→English keyword mappings, CJK bigram fuzzy matching. Query in Chinese, find the right English-named skill instantly.
 
-You've built a library of Claude Code skills. Maybe 50, maybe 200. Each one does something specific. But when a user says "帮我检查一下这段逻辑有没有漏洞," which skill handles that? `s4h-logic-check`? `s4h-logic-consistency-check`? `s4h-ethics-check`?
+---
 
-Scanning a giant skill list by hand is slow. Grep only gets you so far — it can't understand that "润色" means `s4h-writing-line-editing`, or that "头脑风暴" should route to `s4h-creativity-brainstorm`.
+[中文](#中文) | [English](#english)
 
-**cc-skill-router** solves this with a 3-stage semantic routing strategy:
-1. **Direct match** — ~25 memorized high-frequency skills, instant routing
-2. **Domain-filtered search** — narrow by group (thinking/coding/tools/…), then fuzzy match
-3. **Full-registry search** — bilingual semantic search across all skills
+---
 
-## How It Works
+## 中文
+
+### 这是什么？
+
+你的 Claude Code 装了 50 个 skill，甚至 200 个。每个 skill 做一件特定的事。但当你说「帮我检查一下这段论证有没有逻辑漏洞」时，该调用哪个？`s4h-logic-check`？`s4h-logic-consistency-check`？还是一般的 `s4h`？
+
+**cc-skill-router** 解决的就是这个问题。它是一个 3 阶段语义路由器：
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                   User Request                        │
-│         "帮我检查这段论证有没有逻辑漏洞"                 │
-└─────────────────────┬───────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────┐
-│  Stage 1: High-Frequency Direct Match                │
-│  "论证" + "逻辑" + "检查" → s4h-logic-check ✓        │
-│  (Matched from memorized ~25 high-frequency skills)  │
-└─────────────────────┬───────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────┐
-│  Stage 2: Domain-Filtered Search (fallback)          │
-│  skill-router search "论证 逻辑 检查" -g thinking     │
-└─────────────────────┬───────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────┐
-│  Stage 3: Full-Registry Search (fallback)            │
-│  skill-router search "论证 逻辑 检查" -n 5            │
-└─────────────────────────────────────────────────────┘
+用户请求: "这段论证逻辑有问题吗？"
+    │
+    ├─ 阶段1: 高频 Skill 直接命中（~25 个常用 skill 秒匹配）
+    │     "论证" + "逻辑" + "检查" → s4h-logic-check ✓
+    │
+    ├─ 阶段2: 域级过滤搜索（thinking/coding/tools/content/persona/runbook/infra）
+    │     skill-router search "论证 逻辑 检查" -g thinking
+    │
+    └─ 阶段3: 全库模糊搜索（无匹配时兜底）
+          skill-router search "论证 逻辑 检查" -n 5
 ```
 
-## Installation
-
-### 1. Install the CLI tool
+### 安装
 
 ```bash
+# 1. 安装 CLI 工具（Python ≥ 3.10，零依赖）
 pip install git+https://github.com/maxliven/cc-skill-router.git
-```
 
-Or with uv:
+# 2. 安装 Claude Code skill 定义
+skill-router init
 
-```bash
-uv pip install git+https://github.com/maxliven/cc-skill-router.git
-```
-
-Requires Python ≥ 3.10. **Zero dependencies** beyond the standard library.
-
-### 2. Install the Claude Code skill
-
-Copy the skill definition into your Claude Code skills directory:
-
-```bash
-# From the repo
-cp -r skills/skill-router ~/.claude/skills/skill-router
-```
-
-### 3. Generate your registry
-
-```bash
+# 3. 生成注册表
 skill-router scan
 ```
 
-This scans `~/.claude/skills/` and `~/.codex/skills/`, extracts frontmatter from every `SKILL.md`, and builds `~/.ai-shared/skills/.registry/index.json`.
-
-### 4. Configure CLAUDE.md (optional but recommended)
-
-Add the routing strategy to your `CLAUDE.md` so Claude Code automatically uses the router:
-
-```markdown
-## Skill Routing
-
-When a user request might map to an existing skill:
-1. Match against memorized high-frequency skills first
-2. If no match, run: `skill-router search "<user query>" -g <group> -n 5`
-3. Score ≥ 6 → use the skill; 3-5 → read SKILL.md to confirm; <3 → no match
-```
-
-## Usage
-
-### CLI Commands
+### 使用
 
 ```bash
-# Generate/re-generate the registry
-skill-router scan
-skill-router scan -d ~/.claude/skills -o ./my-registry.json
-skill-router scan -v              # Verbose: show group breakdown
-
-# Search for skills
+# 搜索 skill（中文）
 skill-router search "逻辑检查"
-skill-router search "brainstorm creative ideas" -n 10
+skill-router search "头脑风暴创意发散"
 skill-router search "润色文章" -g thinking
-skill-router search "debug" -g coding -f json
 
-# List all skills
+# 搜索 skill（English）
+skill-router search "brainstorm creative ideas"
+skill-router search "debug login error" -g coding
+
+# JSON 输出（给脚本/AI agent 用）
+skill-router search "证据审计" -f json
+
+# 浏览所有 skill
 skill-router list
 skill-router list -g tools
-skill-router list -d ethics -f json
+skill-router list --domain writing -f json
+
+# 重新扫描
+skill-router scan -d ~/.claude/skills -v
 ```
 
-### Search Examples
+### 中文搜索原理
+
+搜索引擎采用 **双语分词 + 加权评分**：
+
+1. **中→英关键词翻译**（最长匹配优先）："润色" → `editing`, `line-editing`, `prose`, `polish`
+2. **CJK bigram 模糊匹配**：连续汉字两两成对，即使描述里没有完整词也能匹配
+3. **加权评分**：skill 名称命中 +3.0，领域命中 +2.0，描述命中 +1.5
+
+### 为什么针对中文优化？
+
+Claude Code 的 skill 生态以英文为主（skill 名、描述全是英文），但中文用户习惯用中文表达需求。cc-skill-router 在中英文之间架了一座桥：
+
+- 100+ 条中文→英文关键词映射（逻辑、创意、战略、写作、心理...）
+- CJK 字符级模糊匹配，短查询也能命中
+- 搜索结果同时展示 skill 名（英文）和描述（中英混合），方便确认
+
+### 自定义
 
 ```bash
-$ skill-router search "论证逻辑检查"
+# 扫描自定义目录
+skill-router scan -d /path/to/my/skills -o ./my-index.json
 
-┌─ Skill Search (5 matches) ────────────────────────────────────┐
-│                                                                │
-│ [1] s4h-logic-check (logic)                                    │
-│    Score: 8.5/10    Type: s4h                                  │
-│    Check argument logic consistency, reasoning validity, ...   │
-│                                                                │
-│ [2] s4h-logic-consistency-check (logic)                        │
-│    Score: 7.2/10    Type: s4h                                  │
-│    Deep consistency audit across claims, assumptions, and ...  │
-│                                                                │
-│ [3] s4h-logic-argument-validation (logic)                      │
-│    Score: 6.8/10    Type: s4h                                  │
-│    Validate argument structure: premises, warrants, conclu...  │
-└────────────────────────────────────────────────────────────────┘
+# 使用自定义注册表搜索
+skill-router search "query" -r ./my-index.json
 ```
+
+编辑 `skill_router/search.py` 中的 `CN_KEYWORD_MAP` 添加你领域的中文关键词映射。
+
+---
+
+## English
+
+### What is this?
+
+You've built a library of Claude Code skills. When a user says "audit my argument for logical fallacies," which skill handles that? Scanning a giant skill list by hand is slow. Grep can't understand that "润色" (polish) means `s4h-writing-line-editing`, or that "头脑风暴" (brainstorm) should route to `s4h-creativity-brainstorm`.
+
+**cc-skill-router** routes user requests to the best matching skill using a 3-stage strategy:
+1. **Direct match** — ~25 high-frequency skills, instant routing
+2. **Domain-filtered search** — narrow by group, then fuzzy match
+3. **Full-registry search** — bilingual semantic search across all skills
+
+### Installation
 
 ```bash
-$ skill-router search "头脑风暴" -f json
+# 1. Install the CLI (Python ≥ 3.10, zero dependencies)
+pip install git+https://github.com/maxliven/cc-skill-router.git
+
+# 2. Install the Claude Code skill definition
+skill-router init
+
+# 3. Generate your registry
+skill-router scan
 ```
 
-```json
-[
-  {
-    "name": "s4h-creativity-brainstorm",
-    "description": "Run an orchestrated multi-method creative thinking sprint...",
-    "domain": "creativity",
-    "group": "thinking",
-    "type": "s4h",
-    "score": 9.2
-  }
-]
+### Usage
+
+```bash
+# Search (Chinese or English)
+skill-router search "logic check"
+skill-router search "brainstorm creative ideas" -n 10
+skill-router search "debug" -g coding -f json
+
+# Browse
+skill-router list
+skill-router list -g tools
+skill-router list --domain writing -f json
+
+# Rescan
+skill-router scan -d ~/.claude/skills ~/.codex/skills -v
 ```
 
-## How the Search Works
+### How Chinese Search Works
 
-The search engine uses a **bilingual tokenization + weighted scoring** approach:
+The engine uses **bilingual tokenization + weighted scoring**:
 
-### Tokenization
-1. **English words** — extracted directly from the query
-2. **CJK bigrams** — consecutive CJK character pairs for fuzzy Chinese matching
-3. **CJK singles** — individual CJK characters as low-weight fallback signals
-4. **Chinese→English translation** — longest-match-first against a 100+ entry keyword map (e.g., "头脑风暴" → ["brainstorm", "creativity"])
+1. **Chinese→English keyword translation** (longest-match-first): "润色" (polish) → `editing`, `line-editing`, `prose`, `polish`
+2. **CJK bigram fuzzy matching**: consecutive character pairs for flexible matching
+3. **Weighted scoring**: name match = 3.0, domain match = 2.0, description match = 1.5
 
-### Scoring
-| Match location | Weight (multi-char) | Weight (single-char) |
-|---------------|--------------------|--------------------|
-| Skill **name** | 3.0 | 1.5 |
-| Skill **domain** | 2.0 | 1.0 |
-| **Description** / type | 1.5 | 0.3 |
+### Why Chinese-Optimized?
 
-Scores are capped at 10.0. Results sorted descending, top N returned.
+Claude Code skills are predominantly English-named and English-described, but a significant user base works in Chinese. cc-skill-router bridges this gap with built-in Chinese NLP:
 
-## Registry Format
+- 100+ Chinese→English keyword mappings covering thinking, writing, strategy, psychology, and more
+- CJK character-level fuzzy matching for short queries
+- Zero-config: Chinese queries work out of the box
 
-The registry is a JSON file mapping skill names to metadata:
+### Customization
 
-```json
-{
-  "s4h-creativity-brainstorm": {
-    "name": "s4h-creativity-brainstorm",
-    "description": "Run an orchestrated multi-method creative thinking sprint...",
-    "domain": "creativity",
-    "group": "thinking",
-    "type": "s4h",
-    "path": "/home/user/.claude/skills/s4h-creativity-brainstorm/SKILL.md",
-    "is_bridge": false
-  }
-}
+```bash
+# Custom skill directories
+skill-router scan -d /path/to/skills -o ./my-index.json
+
+# Use custom registry
+skill-router search "query" -r ./my-index.json
 ```
 
-Each SKILL.md should have YAML frontmatter with at least a `description` field:
+Edit `CN_KEYWORD_MAP` in `skill_router/search.py` to add domain-specific Chinese terms.
 
-```markdown
----
-name: my-skill
-description: "What this skill does and when to use it."
----
-```
-
-## Skill Groups
-
-The router uses 7 high-level groups for domain filtering:
+### Skill Groups
 
 | Group | Description | Examples |
 |-------|-------------|---------|
 | `thinking` | Analysis, creativity, logic, decision, ethics, strategy, writing, systems | s4h-*, dbs-* |
 | `coding` | Code review, debugging, refactoring, architecture | ponytail, code-review |
 | `tools` | External tools and utilities | lit-search, ppt-master, notebooklm |
-| `content` | Content creation and research | khazix-writer, content-research-writer |
+| `content` | Content creation and research | khazix-writer |
 | `persona` | Role-play and style simulation | zhangxuefeng-skill |
-| `runbook` | Troubleshooting and incident response | dbs-troubleshoot, diagnosing-bugs |
+| `runbook` | Troubleshooting and incident response | dbs-troubleshoot |
 | `infra` | System maintenance and configuration | cache-cleanup, storage-analyzer |
-
-## Customization
-
-### Custom skill directories
-
-```bash
-skill-router scan -d /path/to/my/skills /another/path -o ./index.json
-```
-
-### Custom domain/group mapping
-
-Edit `skill_router/registry.py` — the `DOMAIN_OVERRIDES` and `GROUP_SKILLS` dicts are designed to be modified. Or better: define your skills with descriptive names and let the inference rules handle it:
-
-- `s4h-<domain>-*` → domain = `<domain>`, group = `thinking`
-- `dbs-*` → domain = `dbs`, group = `thinking`
-- `ponytail*` → domain = `ponytail`, group = `coding`
-
-### Custom keyword map
-
-Edit `skill_router/search.py` — the `CN_KEYWORD_MAP` dict. Add your domain-specific Chinese terms and their English equivalents.
 
 ## Design Principles
 
