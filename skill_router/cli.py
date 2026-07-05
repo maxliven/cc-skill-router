@@ -185,9 +185,7 @@ def main() -> None:
             "bilingual (Chinese/English) fuzzy search over your skill registry."
         ),
     )
-    parser.add_argument(
-        "--version", action="version", version=f"skill-router {__version__}"
-    )
+    parser.add_argument("--version", action="version", version=f"skill-router {__version__}")
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -196,70 +194,61 @@ def main() -> None:
         "init", help="Install the skill-router skill into Claude Code"
     )
     init_parser.add_argument(
-        "target", nargs="?",
+        "target",
+        nargs="?",
         help="Target directory (default: ~/.claude/skills/skill-router)",
     )
 
     # ── scan ──────────────────────────────────────────────────────────────
-    scan_parser = subparsers.add_parser(
-        "scan", help="Generate registry from skill directories"
-    )
+    scan_parser = subparsers.add_parser("scan", help="Generate registry from skill directories")
     scan_parser.add_argument(
-        "-d", "--dirs", nargs="+",
+        "-d",
+        "--dirs",
+        nargs="+",
         help="Skill directories to scan (default: ~/.claude/skills ~/.codex/skills)",
     )
     scan_parser.add_argument(
-        "-o", "--output",
+        "-o",
+        "--output",
         help=f"Output path for index.json (default: {DEFAULT_REGISTRY_PATH})",
     )
-    scan_parser.add_argument(
-        "-v", "--verbose", action="store_true", help="Show group breakdown"
-    )
+    scan_parser.add_argument("-v", "--verbose", action="store_true", help="Show group breakdown")
 
     # ── search ────────────────────────────────────────────────────────────
-    search_parser = subparsers.add_parser(
-        "search", help="Search the registry for matching skills"
-    )
+    search_parser = subparsers.add_parser("search", help="Search the registry for matching skills")
     search_parser.add_argument("query", help="Search query (Chinese or English)")
     search_parser.add_argument(
         "-n", "--top", type=int, default=5, help="Number of results (default: 5)"
     )
+    search_parser.add_argument("--domain", help="Filter by domain (e.g., creativity, ethics)")
     search_parser.add_argument(
-        "--domain", help="Filter by domain (e.g., creativity, ethics)"
-    )
-    search_parser.add_argument(
-        "-g", "--group",
+        "-g",
+        "--group",
         help="Filter by group (thinking/coding/tools/content/persona/runbook/infra)",
     )
     search_parser.add_argument(
         "-t", "--type", dest="type", help="Filter by type (s4h/dbs/ponytail/tool/plugin)"
     )
+    search_parser.add_argument("-r", "--registry", help="Path to registry JSON")
     search_parser.add_argument(
-        "-r", "--registry", help="Path to registry JSON"
-    )
-    search_parser.add_argument(
-        "-f", "--format", choices=["table", "json"], default="table",
+        "-f",
+        "--format",
+        choices=["table", "json"],
+        default="table",
         help="Output format (default: table)",
     )
 
     # ── list ──────────────────────────────────────────────────────────────
-    list_parser = subparsers.add_parser(
-        "list", help="List all skills in the registry"
-    )
+    list_parser = subparsers.add_parser("list", help="List all skills in the registry")
+    list_parser.add_argument("--domain", help="Filter by domain")
+    list_parser.add_argument("-g", "--group", help="Filter by group")
+    list_parser.add_argument("-t", "--type", dest="type", help="Filter by type")
+    list_parser.add_argument("-r", "--registry", help="Path to registry JSON")
     list_parser.add_argument(
-        "--domain", help="Filter by domain"
-    )
-    list_parser.add_argument(
-        "-g", "--group", help="Filter by group"
-    )
-    list_parser.add_argument(
-        "-t", "--type", dest="type", help="Filter by type"
-    )
-    list_parser.add_argument(
-        "-r", "--registry", help="Path to registry JSON"
-    )
-    list_parser.add_argument(
-        "-f", "--format", choices=["table", "json"], default="table",
+        "-f",
+        "--format",
+        choices=["table", "json"],
+        default="table",
         help="Output format (default: table)",
     )
 

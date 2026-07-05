@@ -37,28 +37,68 @@ DOMAIN_OVERRIDES: dict[str, str] = {
 }
 
 GROUP_SKILLS: dict[str, str] = {
-    **{s: "coding" for s in [
-        "code-review", "codebase-design", "domain-modeling",
-        "improve-codebase-architecture", "tdd", "to-prd",
-        "ponytail", "ponytail-audit", "ponytail-debt",
-        "ponytail-gain", "ponytail-help", "ponytail-review",
-        "diagnosing-bugs",
-    ]},
-    **{s: "content" for s in [
-        "khazix-writer", "content-research-writer", "hv-analysis",
-    ]},
-    **{s: "persona" for s in [
-        "tong-jincheng-skill", "zhangxuefeng-skill", "using-coze-cli",
-    ]},
-    **{s: "runbook" for s in [
-        "dbs-troubleshoot", "git-guardrails-claude-code", "grill-me", "grilling",
-    ]},
-    **{s: "tools" for s in [
-        "lit-search", "neat-freak", "notebooklm", "ppt-master",
-        "skill-curator", "storage-analyzer", "cache-cleanup", "ccswitch",
-        "aihot", "humanities-guard", "libreoffice-calc", "libreoffice-writer",
-        "skill-router", "skill-search",
-    ]},
+    **{
+        s: "coding"
+        for s in [
+            "code-review",
+            "codebase-design",
+            "domain-modeling",
+            "improve-codebase-architecture",
+            "tdd",
+            "to-prd",
+            "ponytail",
+            "ponytail-audit",
+            "ponytail-debt",
+            "ponytail-gain",
+            "ponytail-help",
+            "ponytail-review",
+            "diagnosing-bugs",
+        ]
+    },
+    **{
+        s: "content"
+        for s in [
+            "khazix-writer",
+            "content-research-writer",
+            "hv-analysis",
+        ]
+    },
+    **{
+        s: "persona"
+        for s in [
+            "tong-jincheng-skill",
+            "zhangxuefeng-skill",
+            "using-coze-cli",
+        ]
+    },
+    **{
+        s: "runbook"
+        for s in [
+            "dbs-troubleshoot",
+            "git-guardrails-claude-code",
+            "grill-me",
+            "grilling",
+        ]
+    },
+    **{
+        s: "tools"
+        for s in [
+            "lit-search",
+            "neat-freak",
+            "notebooklm",
+            "ppt-master",
+            "skill-curator",
+            "storage-analyzer",
+            "cache-cleanup",
+            "ccswitch",
+            "aihot",
+            "humanities-guard",
+            "libreoffice-calc",
+            "libreoffice-writer",
+            "skill-router",
+            "skill-search",
+        ]
+    },
     "s4h": "thinking",
     "dbs": "thinking",
 }
@@ -103,9 +143,18 @@ def get_type(name: str) -> str:
     if name.startswith("libreoffice"):
         return "tool"
     tool_names = {
-        "lit-search", "neat-freak", "notebooklm", "ppt-master",
-        "skill-curator", "storage-analyzer", "cache-cleanup", "ccswitch",
-        "aihot", "content-research-writer", "hv-analysis", "khazix-writer",
+        "lit-search",
+        "neat-freak",
+        "notebooklm",
+        "ppt-master",
+        "skill-curator",
+        "storage-analyzer",
+        "cache-cleanup",
+        "ccswitch",
+        "aihot",
+        "content-research-writer",
+        "hv-analysis",
+        "khazix-writer",
         "humanities-guard",
     }
     if name in tool_names:
