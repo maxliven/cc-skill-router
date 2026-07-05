@@ -5,4 +5,4 @@ bilingual (Chinese/English) fuzzy search to route user requests to
 the best matching skill.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

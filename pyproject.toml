@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cc-skill-router"
-version = "0.1.0"
+version = "0.1.1"
 description = "Semantic skill router for Claude Code — bilingual fuzzy search over your skill registry"
 readme = "README.md"
 license = {text = "MIT"}
