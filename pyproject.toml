@@ -19,7 +19,7 @@ keywords = [
     "ai-tools",
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
@@ -38,6 +38,7 @@ dependencies = []
 dev = [
     "ruff>=0.12.0",
     "pytest>=8.0",
+    "pytest-cov>=4.0",
 ]
 
 [project.scripts]
@@ -45,8 +46,9 @@ skill-router = "skill_router.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/maxliven/cc-skill-router"
-Repository = "https://github.com/maxliven/cc-skill-router.git"
+Repository = "https://github.com/maxliven/cc-skill-router"
 Issues = "https://github.com/maxliven/cc-skill-router/issues"
+Changelog = "https://github.com/maxliven/cc-skill-router/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["skill_router"]

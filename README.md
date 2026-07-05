@@ -1,6 +1,11 @@
 # cc-skill-router
 
-**Claude Code 语义技能路由器** — 中英文模糊搜索，3 阶段路由策略，零依赖。
+[![CI](https://github.com/maxliven/cc-skill-router/actions/workflows/ci.yml/badge.svg)](https://github.com/maxliven/cc-skill-router/actions/workflows/ci.yml)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+
+> 渐进式 Claude Code Skill 路由系统 — 中英文模糊搜索，3 阶段路由策略，270+ Skill 覆盖，零依赖。
 
 **Semantic skill router for Claude Code** — bilingual fuzzy search, 3-stage routing, zero dependencies.
 
@@ -33,6 +38,19 @@
     │
     └─ 阶段3: 全库模糊搜索（无匹配时兜底）
           skill-router search "论证 逻辑 检查" -n 5
+```
+
+### 架构
+
+```mermaid
+graph TD
+    User[用户 / Claude Code] --> CLI[skill-router CLI]
+    CLI --> Router[Skill Router]
+    Router --> Registry[Skill Registry]
+    Router --> Search[Semantic Search]
+    Registry --> Index[(skill-index.json)]
+    Search --> Index
+    Router --> Skill[Matched Skill]
 ```
 
 ### 安装
@@ -99,6 +117,24 @@ skill-router search "query" -r ./my-index.json
 ```
 
 编辑 `skill_router/search.py` 中的 `CN_KEYWORD_MAP` 添加你领域的中文关键词映射。
+
+### Python API
+
+```python
+from skill_router import SkillRouter
+
+router = SkillRouter()
+
+# 路由用户请求到最佳 skill
+result = router.route("帮我压缩图片")
+print(result.skill_id)   # "s4h-information-compression"
+print(result.score)      # 8.5
+
+# 搜索 skill（中文或英文）
+matches = router.search("头脑风暴创意发散", n=5)
+for m in matches:
+    print(f"{m.name}: {m.description}")
+```
 
 ---
 
@@ -197,5 +233,10 @@ MIT — see [LICENSE](LICENSE) file.
 
 ## Related
 
-- [cn-llm-bridge](https://github.com/maxliven/cn-llm-bridge) — MCP bridge for multi-model orchestration (Qwen vision, faster-whisper, Kimi K2)
+- [cn-llm-bridge](https://github.com/maxliven/cn-llm-bridge) — MCP bridge for multi-model orchestration (Qwen vision, faster-whisper, Kimi K2). Register its tools as skills in cc-skill-router.
 - [Claude Code](https://claude.ai/code) — Anthropic's CLI for Claude
+
+---
+🌐 Part of the [maxliven](https://github.com/maxliven) AI tooling ecosystem:
+[cc-skill-router](https://github.com/maxliven/cc-skill-router) ·
+[cn-llm-bridge](https://github.com/maxliven/cn-llm-bridge)
