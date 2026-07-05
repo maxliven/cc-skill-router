@@ -2,7 +2,9 @@
 
 **Semantic skill router for Claude Code.** Scans your skill directories, builds a searchable registry, and provides bilingual (Chinese/English) fuzzy search to route user requests to the best matching skill — so you don't have to remember 200+ skill names.
 
-## The Problem
+**Claude Code 语义技能路由器。** 扫描你的 skill 目录，构建可搜索的注册表，通过中英文模糊搜索将用户请求路由到最匹配的技能 — 再也不用记住 200+ 个 skill 名字。
+
+## The Problem / 解决的问题
 
 You've built a library of Claude Code skills. Maybe 50, maybe 200. Each one does something specific. But when a user says "帮我检查一下这段逻辑有没有漏洞," which skill handles that? `s4h-logic-check`? `s4h-logic-consistency-check`? `s4h-ethics-check`?
 
