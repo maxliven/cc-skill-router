@@ -289,7 +289,7 @@ def generate_registry(
         registry.update(entries)
 
     if missing_dirs:
-        print(f"  [INFO] Directories not found (skipped):")
+        print("  [INFO] Directories not found (skipped):")
         for d in missing_dirs:
             print(f"    - {d}")
         print("  Use -d to specify custom skill directories.")

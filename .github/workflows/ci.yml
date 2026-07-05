@@ -14,9 +14,8 @@ jobs:
       - uses: astral-sh/setup-uv@v2
         with:
           python-version: "3.12"
-      - run: uv pip compile pyproject.toml -o requirements.txt
-      - run: uv pip install -r requirements.txt
-      - run: ruff check skill_router/
+      - run: uv sync --extra dev
+      - run: uv run ruff check skill_router/
 
   syntax-check:
     runs-on: ubuntu-latest
@@ -25,5 +24,16 @@ jobs:
       - uses: astral-sh/setup-uv@v2
         with:
           python-version: "3.12"
-      - run: python -m compileall skill_router/
-      - run: python -c "import ast; [ast.parse(open(f).read()) for f in ['skill_router/__init__.py', 'skill_router/registry.py', 'skill_router/search.py', 'skill_router/cli.py']]"
+      - run: uv sync
+      - run: uv run python -m compileall skill_router/
+      - run: uv run python -c "import ast; [ast.parse(open(f).read()) for f in ['skill_router/__init__.py', 'skill_router/registry.py', 'skill_router/search.py', 'skill_router/cli.py']]"
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v2
+        with:
+          python-version: "3.12"
+      - run: uv sync --extra dev
+      - run: uv run pytest tests/ -v
