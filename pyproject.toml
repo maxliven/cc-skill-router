@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cc-skill-router"
-version = "0.1.1"
+version = "0.2.0"
 description = "Semantic skill router for Claude Code — bilingual fuzzy search over your skill registry"
 readme = "README.md"
 license = {text = "MIT"}
@@ -28,6 +28,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Utilities",
 ]
@@ -39,6 +40,7 @@ dev = [
     "ruff>=0.12.0",
     "pytest>=8.0",
     "pytest-cov>=4.0",
+    "mypy>=1.0",
 ]
 
 [project.scripts]
@@ -63,3 +65,12 @@ select = ["E", "F", "I", "W", "UP"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+ignore_missing_imports = true

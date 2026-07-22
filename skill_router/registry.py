@@ -4,10 +4,18 @@ Port of generate-registry.ps1 to Python, with additional support for
 multiple skill directories and configurable domain/group inference.
 """
 
+from __future__ import annotations
+
 import json
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+# ── Default paths ─────────────────────────────────────────────────────────────
+
+DEFAULT_REGISTRY_DIR = Path.home() / ".skill-router"
+DEFAULT_REGISTRY_PATH = DEFAULT_REGISTRY_DIR / "index.json"
 
 # ── Domain inference from skill name ──────────────────────────────────────────
 
@@ -23,7 +31,7 @@ DOMAIN_OVERRIDES: dict[str, str] = {
     "cache-cleanup": "tool",
     "ccswitch": "tool",
     "aihot": "tool",
-    "content-research-writer": "tool",
+    "content-research-write": "tool",
     "hv-analysis": "tool",
     "khazix-writer": "tool",
     "humanities-guard": "tool",
@@ -103,6 +111,75 @@ GROUP_SKILLS: dict[str, str] = {
     "dbs": "thinking",
 }
 
+# ── Data model ────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class SkillEntry:
+    """A single skill registry entry.
+
+    Attributes match the JSON schema written to ``index.json``.
+    """
+
+    name: str
+    description: str
+    domain: str
+    group: str
+    type: str
+    path: str
+    is_bridge: bool
+    source_of_truth: str | None = None
+    trigger_patterns: str | None = None
+    score: float = field(default=0.0, repr=False)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to the registry JSON format."""
+        data: dict[str, Any] = {
+            "name": self.name,
+            "description": self.description,
+            "domain": self.domain,
+            "group": self.group,
+            "type": self.type,
+            "path": self.path,
+            "is_bridge": self.is_bridge,
+        }
+        if self.source_of_truth is not None:
+            data["source_of_truth"] = self.source_of_truth
+        if self.trigger_patterns is not None:
+            data["trigger_patterns"] = self.trigger_patterns
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SkillEntry:
+        """Deserialize from a registry dict, validating required fields."""
+        required = {"name", "description", "domain", "group", "type", "path"}
+        missing = required - set(data.keys())
+        if missing:
+            raise ValueError(f"Registry entry missing required fields: {sorted(missing)}")
+
+        return cls(
+            name=str(data["name"]),
+            description=str(data.get("description", "")),
+            domain=str(data.get("domain", "other")),
+            group=str(data.get("group", "infra")),
+            type=str(data.get("type", "other")),
+            path=str(data["path"]),
+            is_bridge=bool(data.get("is_bridge", False)),
+            source_of_truth=_optional_str(data.get("source_of_truth")),
+            trigger_patterns=_optional_str(data.get("trigger_patterns")),
+        )
+
+
+def _optional_str(value: Any) -> str | None:
+    """Coerce a value to str or None if absent/empty."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    return s or None
+
+
+# ── Taxonomy helpers ──────────────────────────────────────────────────────────
+
 
 def get_domain(name: str) -> str:
     """Infer domain from skill name."""
@@ -121,7 +198,7 @@ def get_domain(name: str) -> str:
     return "other"
 
 
-def get_group(name: str, domain: str, skill_type: str) -> str:
+def get_group(name: str, *, skill_type: str = "") -> str:
     """Map skill to high-level group for routing."""
     if name in GROUP_SKILLS:
         return GROUP_SKILLS[name]
@@ -129,6 +206,10 @@ def get_group(name: str, domain: str, skill_type: str) -> str:
         return "thinking"
     if name.startswith("dbs-"):
         return "thinking"
+    if skill_type == "tool":
+        return "tools"
+    if skill_type == "plugin":
+        return "persona"
     return "infra"
 
 
@@ -165,97 +246,123 @@ def get_type(name: str) -> str:
     return "other"
 
 
-def extract_frontmatter(content: str) -> dict[str, str]:
-    """Extract YAML frontmatter from SKILL.md content.
+# ── Frontmatter parsing ───────────────────────────────────────────────────────
 
-    Returns a dict with at least 'description' key.
-    Handles double-quoted, single-quoted, unquoted, folded (>),
-    and literal-block (|) YAML values.
+# Match a frontmatter field line: key: value or key: block-scalar-marker
+_FIELD_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*?)\s*$")
+
+
+class FrontmatterParseError(ValueError):
+    """Raised when frontmatter cannot be parsed."""
+
+
+_FRONTMATTER_FIELDS = {"description", "source_of_truth", "trigger_patterns"}
+
+
+def extract_frontmatter(content: str) -> dict[str, str]:
+    """Extract selected YAML frontmatter fields from SKILL.md content.
+
+    Parses a *minimal* YAML subset: plain scalars, double/single quoted
+    scalars, folded blocks (``>``), and literal blocks (``|``).  Comments
+    and unknown fields are ignored.  The parser is intentionally
+    zero-dependency so the package remains dependency-free.
     """
     result: dict[str, str] = {}
-    normalized = content.replace("\r\n", "\n")
-
-    # Match YAML frontmatter between --- delimiters
-    m = re.match(r"^---\s*\n(.*?)\n---", normalized, re.DOTALL)
-    if not m:
+    if not content.startswith("---"):
         return result
 
-    yaml_block = m.group(1)
+    # Split on the closing '---' delimiter.  Only the first frontmatter
+    # block is considered.
+    parts = re.split(r"\n---\s*\n", content, maxsplit=1)
+    if len(parts) < 2:
+        return result
 
-    desc = _extract_yaml_field(yaml_block, "description")
-    if desc:
-        result["description"] = desc
+    fm = parts[0][3:].strip()
+    if not fm:
+        return result
 
-    sot = _extract_yaml_field(yaml_block, "source_of_truth")
-    if sot:
-        result["source_of_truth"] = sot
+    lines = fm.splitlines()
+    idx = 0
+    while idx < len(lines):
+        raw = lines[idx]
+        stripped = raw.strip()
 
-    tp = _extract_yaml_field(yaml_block, "trigger_patterns")
-    if tp:
-        result["trigger_patterns"] = tp
+        # Skip blanks and YAML comments.
+        if not stripped or stripped.startswith("#"):
+            idx += 1
+            continue
+
+        match = _FIELD_RE.match(raw)
+        if not match:
+            idx += 1
+            continue
+
+        key, rest = match.groups()
+        if key not in _FRONTMATTER_FIELDS:
+            idx += 1
+            continue
+
+        if rest in (">", "|"):
+            idx, value = _consume_block_scalar(lines, idx + 1, preserve_newlines=(rest == "|"))
+        elif rest.startswith('"') and rest.endswith('"') and len(rest) >= 2:
+            value = rest[1:-1]
+            idx += 1
+        elif rest.startswith("'") and rest.endswith("'") and len(rest) >= 2:
+            value = rest[1:-1]
+            idx += 1
+        else:
+            value = rest
+            idx += 1
+
+        if value:
+            result[key] = value
 
     return result
 
 
-def _extract_yaml_field(yaml_block: str, field: str) -> str | None:
-    """Extract a single field from a YAML block.
+def _consume_block_scalar(
+    lines: list[str], start: int, *, preserve_newlines: bool
+) -> tuple[int, str]:
+    """Consume indented continuation lines for a YAML block scalar.
 
-    Handles: double-quoted, single-quoted, unquoted (single line),
-    folded (>), and literal-block (|) multi-line values.
+    Returns the next line index and the scalar value.
     """
-    # Double-quoted: description: "value"
-    m = re.search(rf'^{field}:\s*"([^"]*)"', yaml_block, re.MULTILINE)
-    if m:
-        return m.group(1).strip()
+    block: list[str] = []
+    idx = start
+    while idx < len(lines):
+        line = lines[idx]
+        if line and not line[0].isspace():
+            break
+        block.append(line)
+        idx += 1
 
-    # Single-quoted: description: 'value'
-    m = re.search(rf"^{field}:\s*'([^']*)'", yaml_block, re.MULTILINE)
-    if m:
-        return m.group(1).strip()
+    if not block:
+        return idx, ""
 
-    # Folded block scalar: description: >\n  value
-    m = _extract_block_scalar(yaml_block, field, ">")
-    if m:
-        return m
+    # Determine the base indentation from the first non-empty line and
+    # strip it from every line.
+    nonempty = [line for line in block if line.strip()]
+    base_indent = min(len(line) - len(line.lstrip()) for line in nonempty) if nonempty else 0
+    stripped = [line[base_indent:] if line.strip() else line for line in block]
 
-    # Literal block scalar: description: |\n  value
-    m = _extract_block_scalar(yaml_block, field, "|")
-    if m:
-        return m
+    if preserve_newlines:
+        value = "\n".join(line.rstrip() for line in stripped)
+    else:
+        value = " ".join(line.strip() for line in stripped if line.strip())
 
-    # Unquoted single line: description: value
-    m = re.search(rf"^{field}:\s*(.+?)$", yaml_block, re.MULTILINE)
-    if m:
-        return m.group(1).strip()
-
-    return None
+    return idx, value.strip()
 
 
-def _extract_block_scalar(yaml_block: str, field: str, marker: str) -> str | None:
-    """Extract a YAML block scalar (> or |) value.
-
-    Matches from the field line through indented continuation lines,
-    stopping at the next field (non-indented line) or end of block.
-    """
-    escaped_marker = re.escape(marker)
-    m = re.search(
-        rf"^{field}:\s*{escaped_marker}\s*\n(.*?)(?:\n\S|\Z)",
-        yaml_block,
-        re.MULTILINE | re.DOTALL,
-    )
-    if m:
-        # Collapse whitespace while preserving word boundaries
-        return re.sub(r"\s+", " ", m.group(1)).strip()
-    return None
+# ── Directory scanning ────────────────────────────────────────────────────────
 
 
-def scan_directory(skills_dir: Path) -> dict[str, dict[str, Any]]:
+def scan_directory(skills_dir: Path) -> dict[str, SkillEntry]:
     """Scan a skills directory for SKILL.md files and build registry entries.
 
     Errors (permission, encoding) are skipped with a warning — one bad
     file shouldn't break the entire scan.
     """
-    registry: dict[str, dict[str, Any]] = {}
+    registry: dict[str, SkillEntry] = {}
 
     if not skills_dir.is_dir():
         return registry
@@ -276,37 +383,43 @@ def scan_directory(skills_dir: Path) -> dict[str, dict[str, Any]]:
             print(f"  [WARN] Skipping {name}: {e}", flush=True)
             continue
 
-        frontmatter = extract_frontmatter(content)
+        try:
+            frontmatter = extract_frontmatter(content)
+        except FrontmatterParseError as e:
+            print(f"  [WARN] Could not parse frontmatter for {name}: {e}", flush=True)
+            frontmatter = {}
+
         description = frontmatter.get("description", "")
         source_of_truth = frontmatter.get("source_of_truth")
+        trigger_patterns = frontmatter.get("trigger_patterns")
         is_bridge = source_of_truth is not None
 
         domain = get_domain(name)
         skill_type = get_type(name)
-        group = get_group(name, domain, skill_type)
+        group = get_group(name, skill_type=skill_type)
 
-        entry: dict[str, Any] = {
-            "name": name,
-            "description": description,
-            "domain": domain,
-            "group": group,
-            "type": skill_type,
-            "path": str(skill_md.resolve()),
-            "is_bridge": is_bridge,
-        }
-
-        if source_of_truth:
-            entry["source_of_truth"] = source_of_truth
-
-        registry[name] = entry
+        registry[name] = SkillEntry(
+            name=name,
+            description=description,
+            domain=domain,
+            group=group,
+            type=skill_type,
+            path=str(skill_md.resolve()),
+            is_bridge=is_bridge,
+            source_of_truth=source_of_truth,
+            trigger_patterns=trigger_patterns,
+        )
 
     return registry
+
+
+# ── Registry generation ───────────────────────────────────────────────────────
 
 
 def generate_registry(
     skill_dirs: list[Path] | None = None,
     output_path: Path | None = None,
-) -> dict[str, dict[str, Any]]:
+) -> dict[str, SkillEntry]:
     """Generate the skill registry from one or more skill directories.
 
     Args:
@@ -315,7 +428,7 @@ def generate_registry(
         output_path: If provided, write JSON to this path.
 
     Returns:
-        The complete registry dict.
+        The complete registry dict mapping skill name to ``SkillEntry``.
     """
     if skill_dirs is None:
         skill_dirs = [
@@ -323,7 +436,7 @@ def generate_registry(
             Path.home() / ".codex" / "skills",
         ]
 
-    registry: dict[str, dict[str, Any]] = {}
+    registry: dict[str, SkillEntry] = {}
     missing_dirs: list[str] = []
 
     for skills_dir in skill_dirs:
@@ -347,8 +460,43 @@ def generate_registry(
     if output_path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(
-            json.dumps(registry, ensure_ascii=False, indent=2),
+            json.dumps(
+                {name: entry.to_dict() for name, entry in registry.items()},
+                ensure_ascii=False,
+                indent=2,
+            ),
             encoding="utf-8",
         )
+
+    return registry
+
+
+def load_registry(path: Path) -> dict[str, SkillEntry]:
+    """Load and validate a registry JSON file.
+
+    Raises:
+        FileNotFoundError: If the registry file does not exist.
+        ValueError: If the file is corrupted or has an invalid format.
+    """
+    if not path.is_file():
+        raise FileNotFoundError(f"Registry not found: {path}")
+
+    try:
+        with path.open(encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Registry file is corrupted: {path}\n  {e}") from e
+
+    if not isinstance(data, dict):
+        raise ValueError(f"Invalid registry format in: {path}")
+
+    registry: dict[str, SkillEntry] = {}
+    for name, entry_data in data.items():
+        if not isinstance(entry_data, dict):
+            raise ValueError(f"Invalid entry for skill '{name}' in {path}")
+        try:
+            registry[name] = SkillEntry.from_dict(entry_data)
+        except ValueError as e:
+            raise ValueError(f"Invalid entry for skill '{name}' in {path}: {e}") from e
 
     return registry

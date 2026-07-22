@@ -7,58 +7,69 @@ Commands:
     skill-router list     List all skills in the registry.
 """
 
+from __future__ import annotations
+
 import argparse
+import importlib.resources
 import json
 import shutil
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import __version__
-from .registry import generate_registry
+from .registry import DEFAULT_REGISTRY_PATH, SkillEntry, generate_registry, load_registry
 from .search import search
 
-# Default registry path — kept under user's home, not tied to any
-# specific Claude Code setup. Users can override with -r/--registry.
-DEFAULT_REGISTRY_DIR = Path.home() / ".skill-router"
-DEFAULT_REGISTRY_PATH = DEFAULT_REGISTRY_DIR / "index.json"
+if TYPE_CHECKING:
+    pass
 
 
-def _load_registry(path: Path) -> dict:
+def _load_registry(path: Path) -> dict[str, SkillEntry]:
     """Load and validate the registry JSON file.
 
-    Gracefully handles missing file, corrupted JSON, and empty registry.
+    Exits with a helpful message for missing/corrupted registries.
     """
-    if not path.is_file():
+    try:
+        return load_registry(path)
+    except FileNotFoundError:
         print(f"[ERROR] Registry not found: {path}", file=sys.stderr)
         print("  Run 'skill-router scan' first to generate it.", file=sys.stderr)
-        sys.exit(1)
+    except ValueError as e:
+        print(f"[ERROR] {e}", file=sys.stderr)
+        print("  Run 'skill-router scan' to regenerate it.", file=sys.stderr)
+    sys.exit(1)
 
+
+def _bundled_skill_md() -> Path:
+    """Return the path to the bundled skill-router SKILL.md.
+
+    Works both in editable installs and in packaged wheels by using
+    ``importlib.resources``.
+    """
     try:
-        with open(path, encoding="utf-8") as f:
-            registry = json.load(f)
-    except json.JSONDecodeError as e:
-        print(f"[ERROR] Registry file is corrupted: {path}", file=sys.stderr)
-        print(f"  {e}", file=sys.stderr)
-        print("  Run 'skill-router scan' to regenerate it.", file=sys.stderr)
-        sys.exit(1)
+        resource = (
+            importlib.resources.files("skill_router") / "skills" / "skill-router" / "SKILL.md"
+        )
+        if resource.is_file():
+            return Path(str(resource))
+    except (ImportError, ModuleNotFoundError, OSError):
+        pass
 
-    if not isinstance(registry, dict):
-        print(f"[ERROR] Invalid registry format in: {path}", file=sys.stderr)
-        print("  Run 'skill-router scan' to regenerate it.", file=sys.stderr)
-        sys.exit(1)
+    # Fallback for unusual packaging layouts.
+    fallback = Path(__file__).resolve().parent / "skills" / "skill-router" / "SKILL.md"
+    if fallback.is_file():
+        return fallback
 
-    return registry
+    print("[ERROR] Bundled SKILL.md not found. Reinstall the package.", file=sys.stderr)
+    sys.exit(1)
 
 
 def cmd_init(args: argparse.Namespace) -> None:
     """Bootstrap: copy the skill-router SKILL.md into ~/.claude/skills/."""
-    target_dir = Path(args.target or str(Path.home() / ".claude" / "skills" / "skill-router"))
+    target_dir = Path(args.target or Path.home() / ".claude" / "skills" / "skill-router")
 
-    # Locate the bundled SKILL.md
-    skill_md = Path(__file__).resolve().parent.parent / "skills" / "skill-router" / "SKILL.md"
-    if not skill_md.is_file():
-        print("[ERROR] Bundled SKILL.md not found. Reinstall the package.", file=sys.stderr)
-        sys.exit(1)
+    skill_md = _bundled_skill_md()
 
     target_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(skill_md, target_dir / "SKILL.md")
@@ -88,8 +99,7 @@ def cmd_scan(args: argparse.Namespace) -> None:
     if args.verbose:
         groups: dict[str, int] = {}
         for entry in registry.values():
-            g = entry.get("group", "unknown")
-            groups[g] = groups.get(g, 0) + 1
+            groups[entry.group] = groups.get(entry.group, 0) + 1
         print("  Groups:")
         for g, count in sorted(groups.items()):
             print(f"    {g}: {count}")
@@ -98,14 +108,6 @@ def cmd_scan(args: argparse.Namespace) -> None:
 def cmd_search(args: argparse.Namespace) -> None:
     """Search the registry for matching skills."""
     registry_path = Path(args.registry) if args.registry else DEFAULT_REGISTRY_PATH
-
-    if not registry_path.is_file():
-        print(f"[ERROR] Registry not found: {registry_path}", file=sys.stderr)
-        print("  Run 'skill-router scan' first to generate it.", file=sys.stderr)
-        print("  If your skills are at a custom location:", file=sys.stderr)
-        print("    skill-router scan -d /path/to/skills -o /path/to/index.json", file=sys.stderr)
-        sys.exit(1)
-
     registry = _load_registry(registry_path)
 
     if len(registry) == 0:
@@ -152,30 +154,54 @@ def cmd_list(args: argparse.Namespace) -> None:
 
     entries = list(registry.values())
     if args.domain:
-        entries = [e for e in entries if e.get("domain") == args.domain]
+        entries = [e for e in entries if e.domain == args.domain]
     if args.group:
-        entries = [e for e in entries if e.get("group") == args.group]
+        entries = [e for e in entries if e.group == args.group]
     if args.type:
-        entries = [e for e in entries if e.get("type") == args.type]
+        entries = [e for e in entries if e.type == args.type]
 
-    entries.sort(key=lambda e: e["name"])
+    entries.sort(key=lambda e: e.name)
 
     if args.format == "json":
-        print(json.dumps(entries, ensure_ascii=False, indent=2))
+        print(json.dumps([e.to_dict() for e in entries], ensure_ascii=False, indent=2))
         return
 
     print(f"Skills ({len(entries)}):")
+    if not entries:
+        print("  No skills match the current filters.")
+        return
+
     for e in entries:
-        bridge = " *" if e.get("is_bridge") else ""
-        print(f"  {e['name']}  [{e.get('group', '?')}/{e.get('domain', '?')}]{bridge}")
+        bridge = " *" if e.is_bridge else ""
+        print(f"  {e.name}  [{e.group}/{e.domain}]{bridge}")
 
 
-def main() -> None:
-    # Ensure UTF-8 output on Windows (GBK codec can't handle Unicode)
+def _add_format_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "-f",
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+
+def _add_registry_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("-r", "--registry", help="Path to registry JSON")
+
+
+def _add_filter_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--domain", help="Filter by domain")
+    parser.add_argument("-g", "--group", help="Filter by group")
+    parser.add_argument("-t", "--type", dest="type", help="Filter by type")
+
+
+def main(argv: list[str] | None = None) -> None:
+    # Ensure UTF-8 output on Windows (GBK codec can't handle Unicode).
     try:
         sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
         sys.stderr.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
-    except Exception:
+    except (AttributeError, OSError):
         pass
 
     parser = argparse.ArgumentParser(
@@ -220,39 +246,17 @@ def main() -> None:
     search_parser.add_argument(
         "-n", "--top", type=int, default=5, help="Number of results (default: 5)"
     )
-    search_parser.add_argument("--domain", help="Filter by domain (e.g., creativity, ethics)")
-    search_parser.add_argument(
-        "-g",
-        "--group",
-        help="Filter by group (thinking/coding/tools/content/persona/runbook/infra)",
-    )
-    search_parser.add_argument(
-        "-t", "--type", dest="type", help="Filter by type (s4h/dbs/ponytail/tool/plugin)"
-    )
-    search_parser.add_argument("-r", "--registry", help="Path to registry JSON")
-    search_parser.add_argument(
-        "-f",
-        "--format",
-        choices=["table", "json"],
-        default="table",
-        help="Output format (default: table)",
-    )
+    _add_filter_arguments(search_parser)
+    _add_registry_argument(search_parser)
+    _add_format_argument(search_parser)
 
     # ── list ──────────────────────────────────────────────────────────────
     list_parser = subparsers.add_parser("list", help="List all skills in the registry")
-    list_parser.add_argument("--domain", help="Filter by domain")
-    list_parser.add_argument("-g", "--group", help="Filter by group")
-    list_parser.add_argument("-t", "--type", dest="type", help="Filter by type")
-    list_parser.add_argument("-r", "--registry", help="Path to registry JSON")
-    list_parser.add_argument(
-        "-f",
-        "--format",
-        choices=["table", "json"],
-        default="table",
-        help="Output format (default: table)",
-    )
+    _add_filter_arguments(list_parser)
+    _add_registry_argument(list_parser)
+    _add_format_argument(list_parser)
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.command == "init":
         cmd_init(args)

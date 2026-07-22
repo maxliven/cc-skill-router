@@ -8,11 +8,16 @@ Port of search-skill.ps1 to Python. Supports:
 - Domain, group, and type filtering
 """
 
+from __future__ import annotations
+
 import re
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .registry import SkillEntry
 
 # ── Chinese → English keyword map ────────────────────────────────────────────
-# Longest-match-first: keys sorted by length descending at lookup time.
+# Longest-match-first: keys sorted by length descending at module load time.
 # Each Chinese keyword maps to a list of English search terms.
 
 CN_KEYWORD_MAP: dict[str, list[str]] = {
@@ -143,8 +148,12 @@ CN_KEYWORD_MAP: dict[str, list[str]] = {
     "审计": ["audit", "review", "debt"],
 }
 
-# CJK Unicode range
-_CJK_PATTERN = re.compile(r"[一-鿿㐀-䶿豈-﫿]")
+# Pre-compute longest-match-first ordering once at import time.
+_SORTED_CN_KEYS = sorted(CN_KEYWORD_MAP, key=len, reverse=True)
+
+# CJK Unicode range (CJK Unified Ideographs + extensions A/B/C/D/E/F/G)
+_CJK_PATTERN = re.compile(r"[一-鿿]")
+_ENGLISH_WORD_RE = re.compile(r"[a-z0-9]+(?:[-_][a-z0-9]+)*")
 
 
 def _tokenize(query: str) -> list[str]:
@@ -155,33 +164,31 @@ def _tokenize(query: str) -> list[str]:
     query_lower = query.lower().strip()
     tokens: list[str] = []
 
-    # 1. English words
-    english_words = [w for w in query_lower.split() if re.search(r"[a-z]", w)]
-    tokens.extend(english_words)
+    # 1. English words and hyphenated identifiers (strips punctuation).
+    tokens.extend(_ENGLISH_WORD_RE.findall(query_lower))
 
-    # 2. CJK bigrams (consecutive CJK pairs for fuzzy matching)
+    # 2. CJK bigrams (consecutive CJK pairs for fuzzy matching).
     bigrams: list[str] = []
+    chars = [_CJK_PATTERN.fullmatch(c) for c in query_lower]
     for i in range(len(query_lower) - 1):
-        pair = query_lower[i : i + 2]
-        if _CJK_PATTERN.search(pair):
-            bigrams.append(pair)
+        if chars[i] and chars[i + 1]:
+            bigrams.append(query_lower[i : i + 2])
     tokens.extend(bigrams)
 
-    # 3. Individual CJK characters
-    singles = [c for c in query_lower if _CJK_PATTERN.match(c)]
+    # 3. Individual CJK characters.
+    singles = [c for c in query_lower if _CJK_PATTERN.fullmatch(c)]
     tokens.extend(singles)
 
-    # 4. Chinese → English keyword translation (longest-match-first)
-    sorted_keys = sorted(CN_KEYWORD_MAP.keys(), key=len, reverse=True)
+    # 4. Chinese → English keyword translation (longest-match-first).
     remaining = query_lower
     cn_keywords: list[str] = []
-    for key in sorted_keys:
-        if key in remaining:
+    for key in _SORTED_CN_KEYS:
+        while key in remaining:
             cn_keywords.extend(CN_KEYWORD_MAP[key])
-            remaining = remaining.replace(key, "")
+            remaining = remaining.replace(key, "", 1)
     tokens.extend(cn_keywords)
 
-    # Deduplicate, keep order, filter empty
+    # Deduplicate, keep order, filter empty.
     seen: set[str] = set()
     unique: list[str] = []
     for t in tokens:
@@ -192,8 +199,18 @@ def _tokenize(query: str) -> list[str]:
     return unique
 
 
+# Match-location weights.
+_WEIGHT_NAME = 3.0
+_WEIGHT_DOMAIN = 2.0
+_WEIGHT_DEFAULT = 1.5
+_WEIGHT_CJK_NAME = 1.5
+_WEIGHT_CJK_DOMAIN = 1.0
+_WEIGHT_CJK_DEFAULT = 0.3
+
+
 def _calculate_score(
     terms: list[str],
+    *,
     name: str,
     description: str,
     domain: str,
@@ -215,44 +232,47 @@ def _calculate_score(
     score = 0.0
 
     for term in terms:
-        term_str = str(term)
-
-        if len(term_str) <= 1:
-            # Single character — low weight, still useful for CJK
-            if term_str in target:
-                if term_str in name_lower:
-                    score += 1.5
-                elif term_str in domain_lower:
-                    score += 1.0
+        if len(term) <= 1:
+            # Single character — low weight, still useful for CJK.
+            if term in target:
+                if term in name_lower:
+                    score += _WEIGHT_CJK_NAME
+                elif term in domain_lower:
+                    score += _WEIGHT_CJK_DOMAIN
                 else:
-                    score += 0.3
+                    score += _WEIGHT_CJK_DEFAULT
             continue
 
-        if term_str in target:
-            if term_str in name_lower:
-                score += 3.0
-            elif term_str in domain_lower:
-                score += 2.0
+        if term in target:
+            if term in name_lower:
+                score += _WEIGHT_NAME
+            elif term in domain_lower:
+                score += _WEIGHT_DOMAIN
             else:
-                score += 1.5
+                score += _WEIGHT_DEFAULT
 
     return round(min(score, 10.0), 1)
 
 
+def _normalize(value: str) -> str:
+    """Normalize a filter value for case-insensitive comparison."""
+    return value.strip().lower()
+
+
 def search(
     query: str,
-    registry: dict[str, dict[str, Any]],
+    registry: dict[str, SkillEntry],
     top: int = 5,
     domain: str = "",
     group: str = "",
     skill_type: str = "",
-) -> list[dict[str, Any]]:
+) -> list[dict[str, object]]:
     """Search the skill registry for matching skills.
 
     Args:
         query: User's request or problem description (Chinese or English).
-        registry: The skill registry dict (name → entry).
-        top: Number of results to return.
+        registry: The skill registry mapping name to ``SkillEntry``.
+        top: Number of results to return. Must be >= 0.
         domain: Filter by domain (e.g., 'creativity', 'ethics').
         group: Filter by high-level group (thinking/coding/tools/content/
                persona/runbook/infra).
@@ -261,32 +281,39 @@ def search(
     Returns:
         List of matching entries with added 'score' field, sorted descending.
     """
+    if top < 0:
+        raise ValueError("top must be a non-negative integer")
+
     terms = _tokenize(query)
 
-    results: list[dict[str, Any]] = []
+    norm_domain = _normalize(domain)
+    norm_group = _normalize(group)
+    norm_type = _normalize(skill_type)
+
+    results: list[dict[str, object]] = []
     for name, entry in registry.items():
-        # Apply filters
-        if domain and entry.get("domain") != domain:
+        # Apply filters (case-insensitive).
+        if norm_domain and _normalize(entry.domain) != norm_domain:
             continue
-        if group and entry.get("group") != group:
+        if norm_group and _normalize(entry.group) != norm_group:
             continue
-        if skill_type and entry.get("type") != skill_type:
+        if norm_type and _normalize(entry.type) != norm_type:
             continue
 
         score = _calculate_score(
             terms,
             name=name,
-            description=entry.get("description", ""),
-            domain=entry.get("domain", ""),
-            skill_type=entry.get("type", ""),
+            description=entry.description,
+            domain=entry.domain,
+            skill_type=entry.type,
         )
 
         if score > 0:
-            result = dict(entry)
+            result = entry.to_dict()
             result["score"] = score
             results.append(result)
 
-    # Sort by score descending, then by name
-    results.sort(key=lambda r: (-r["score"], r["name"]))
+    # Sort by score descending, then by name.
+    results.sort(key=lambda r: (-float(r["score"]), str(r["name"])))
 
     return results[:top]
